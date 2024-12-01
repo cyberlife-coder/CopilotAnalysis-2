@@ -493,5 +493,9 @@ def export_excel():
         logger.error(f"Erreur lors de la génération du fichier Excel: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy'}), 200
+
 if __name__ == '__main__':
     app.run(debug=True)
