@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Container, Box, TextField, Button, Paper, Typography, Grid, CircularProgress, Alert, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Card, CardContent, Avatar, Chip } from '@mui/material'
 import { Bar, Line, Pie } from 'react-chartjs-2'
 import {
@@ -36,6 +36,11 @@ function App() {
   const [totalSeats, setTotalSeats] = useState(0);
 
   const fetchMetrics = async () => {
+    if (!token || !org) {
+      setError('Token and organization name are required');
+      return;
+    }
+    
     try {
       setLoading(true)
       setError(null)
@@ -65,6 +70,7 @@ function App() {
       }
       
       setMetrics(data)
+      fetchUsers(); // Fetch users after metrics are successfully retrieved
     } catch (err) {
       console.error('Error fetching metrics:', err)
       setError(err.message)
@@ -72,18 +78,6 @@ function App() {
       setLoading(false)
     }
   }
-
-  useEffect(() => {
-    if (token && org) {
-      // Store values in localStorage
-      localStorage.setItem('githubToken', token)
-      localStorage.setItem('githubOrg', org)
-      
-      console.log('Token and org available, fetching metrics...')
-      fetchMetrics();
-      fetchUsers();
-    }
-  }, [token, org])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -630,8 +624,6 @@ function App() {
                 </Paper>
               </Grid>
             </Grid>
-
-           
 
             {/* Section Activité des Utilisateurs */}
             <Box sx={{ mt: 4 }}>
