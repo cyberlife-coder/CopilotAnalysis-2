@@ -213,8 +213,8 @@ Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de
 ### Attribution
 Si vous utilisez ce projet, merci d'inclure l'attribution suivante :
 ```
-Basé sur GitHub Copilot Analytics Dashboard (https://github.com/M4k34B3tt3rW0r1D/CopilotAnalysis-2)
-Copyright (c) 2024 TUI
+Basé sur GitHub Copilot Analytics Dashboard (https://github.com/cyberlife-coder/CopilotAnalysis-2)
+
 ```
 
 ## 🤝 Contribution
