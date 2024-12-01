@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Container, Box, TextField, Button, Paper, Typography, Grid, CircularProgress, Alert, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Card, CardContent, Avatar, Chip } from '@mui/material'
+import { Container, Box, TextField, Button, Paper, Typography, Grid, CircularProgress, Alert, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Card, CardContent, Avatar, Chip, Link } from '@mui/material'
 import { Bar, Line, Pie } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -686,6 +686,37 @@ function App() {
             </Box>
           </>
         )}
+      </Box>
+      
+      {/* Footer */}
+      <Box 
+        component="footer" 
+        sx={{ 
+          py: 3, 
+          mt: 'auto',
+          textAlign: 'center',
+          borderTop: 1,
+          borderColor: 'divider',
+          bgcolor: 'background.paper'
+        }}
+      >
+        <Typography variant="body2" color="text.secondary">
+          Fait avec ❤️ par{' '}
+          <Link 
+            href="https://github.com/cyberlife-coder" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            sx={{ 
+              color: 'primary.main',
+              textDecoration: 'none',
+              '&:hover': {
+                textDecoration: 'underline'
+              }
+            }}
+          >
+            cyberlife-coder
+          </Link>
+        </Typography>
       </Box>
     </Container>
   )
