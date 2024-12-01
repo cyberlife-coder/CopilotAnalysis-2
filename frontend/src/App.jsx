@@ -282,39 +282,6 @@ function App() {
               )}
             </Paper>
 
-            {/* Billing Information */}
-            <Paper sx={{ p: 3, mb: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Information de Facturation
-              </Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} sm={6} md={4}>
-                  <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
-                    <Typography variant="subtitle2">Sièges Achetés</Typography>
-                    <Typography variant="h4">
-                      {metrics.billing?.seats_purchased || 0}
-                    </Typography>
-                  </Paper>
-                </Grid>
-                <Grid item xs={12} sm={6} md={4}>
-                  <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
-                    <Typography variant="subtitle2">Sièges Utilisés</Typography>
-                    <Typography variant="h4">
-                      {metrics.billing?.seats_consumed || 0}
-                    </Typography>
-                  </Paper>
-                </Grid>
-                <Grid item xs={12} sm={6} md={4}>
-                  <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
-                    <Typography variant="subtitle2">Taux d'Utilisation</Typography>
-                    <Typography variant="h4">
-                      {(metrics.billing?.seat_utilization || 0).toFixed(1)}%
-                    </Typography>
-                  </Paper>
-                </Grid>
-              </Grid>
-            </Paper>
-
             {/* Global Metrics */}
             <Paper sx={{ p: 3, mb: 3 }}>
               <Typography variant="h6" gutterBottom>
