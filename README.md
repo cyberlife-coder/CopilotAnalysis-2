@@ -199,6 +199,18 @@ Le token doit avoir les permissions suivantes :
 - Gestion sécurisée des secrets
 - Logs d'audit
 
+## 📸 Démonstration
+
+<div align="center">
+  <img src="screenshots/copilotAnalysis-2.gif" alt="Démonstration de GitHub Copilot Analytics" width="100%">
+</div>
+
+*Cette animation montre les principales fonctionnalités de l'application :*
+- Configuration avec token GitHub et nom de l'organisation
+- Affichage des métriques Copilot (sièges actifs/inactifs)
+- Visualisation des statistiques d'utilisation
+- Liste détaillée des utilisateurs et leurs activités
+
 ## 📝 License
 
 Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de détails.
