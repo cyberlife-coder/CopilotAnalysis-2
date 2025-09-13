@@ -45,6 +45,96 @@ def get_github_headers(token):
         "X-GitHub-Api-Version": "2022-11-28"
     }
 
+def process_users_from_metrics(daily_metrics, language_stats):
+    """
+    Extrait les données utilisateurs depuis les métriques Copilot (API GA)
+    pour remplacer l'ancienne API /copilot/usage
+    """
+    logger.debug("Traitement des données utilisateurs depuis les métriques")
+
+    user_stats = {}
+    global_user_metrics = {
+        'total_users': 0,
+        'active_users': 0,
+        'inactive_users': 0
+    }
+
+    try:
+        for day_data in daily_metrics or []:
+            date_str = day_data.get('date', day_data.get('day', 'Unknown'))
+
+            # Comptabiliser les utilisateurs actifs ce jour-là
+            active_users_today = set()
+
+            # Parcourir les données par langage pour extraire les utilisateurs
+            for lang_name, lang_data in language_stats.items():
+                if 'active_users' in lang_data and isinstance(lang_data['active_users'], list):
+                    # Les métriques incluent parfois des listes d'utilisateurs actifs
+                    active_users_today.update(lang_data['active_users'])
+
+            # Si nous n'avons pas de données détaillées, utiliser le total du jour
+            if not active_users_today and 'active_users' in day_data:
+                active_users_today.add(f"user_{day_data['active_users']}")
+
+            # Mettre à jour les statistiques globales
+            for user_id in active_users_today:
+                if user_id not in user_stats:
+                    user_stats[user_id] = {
+                        'login': user_id,
+                        'total_suggestions': 0,
+                        'accepted_suggestions': 0,
+                        'rejected_suggestions': 0,
+                        'languages_used': set(),
+                        'active_days': set(),
+                        'last_activity': date_str,
+                        'is_active': True
+                    }
+
+                user_stats[user_id]['active_days'].add(date_str)
+                user_stats[user_id]['total_suggestions'] += day_data.get('total_suggestions', 0)
+                user_stats[user_id]['accepted_suggestions'] += day_data.get('accepted_suggestions', 0)
+                user_stats[user_id]['rejected_suggestions'] += day_data.get('rejected_suggestions', 0)
+
+                # Ajouter les langages utilisés
+                for lang_name in language_stats.keys():
+                    user_stats[user_id]['languages_used'].add(lang_name)
+
+        # Calculer les métriques finales pour chaque utilisateur
+        users = []
+        for user_id, stats in user_stats.items():
+            total_suggestions = stats['total_suggestions']
+            acceptance_rate = 0
+            if total_suggestions > 0:
+                acceptance_rate = (stats['accepted_suggestions'] / total_suggestions) * 100
+
+            user = {
+                'login': stats['login'],
+                'name': stats['login'],  # Nom d'utilisateur comme nom d'affichage
+                'avatar_url': f"https://github.com/{stats['login']}.png",  # Avatar par défaut GitHub
+                'last_activity': stats['last_activity'],
+                'last_editor': 'VS Code',  # Valeur par défaut
+                'created_at': None,  # Non disponible dans cette API
+                'total_suggestions': total_suggestions,
+                'accepted_suggestions': stats['accepted_suggestions'],
+                'rejected_suggestions': stats['rejected_suggestions'],
+                'acceptance_rate': round(acceptance_rate, 2),
+                'languages_used': list(stats['languages_used']),
+                'active_days_count': len(stats['active_days']),
+                'is_active': stats['is_active']
+            }
+            users.append(user)
+
+        global_user_metrics['total_users'] = len(users)
+        global_user_metrics['active_users'] = len([u for u in users if u['is_active']])
+        global_user_metrics['inactive_users'] = global_user_metrics['total_users'] - global_user_metrics['active_users']
+
+        logger.debug(f"Utilisateurs traités: {len(users)}")
+        return users, global_user_metrics
+
+    except Exception as e:
+        logger.error(f"Erreur lors du traitement des utilisateurs: {str(e)}")
+        return [], {'total_users': 0, 'active_users': 0, 'inactive_users': 0}
+
 def process_daily_metrics(daily_metrics):
     """
     Transforme la réponse Copilot Metrics API (GA) en format utilisable par le frontend.
@@ -247,16 +337,19 @@ def get_metrics():
         billing_url = f'https://api.github.com/orgs/{org}/copilot/billing'
         billing_response = requests.get(billing_url, headers=headers)
         if billing_response.status_code != 200:
-            logger.error(f"Erreur de facturation: {billing_response.status_code} - {billing_response.text}")
-            return jsonify({'error': f"Erreur lors de la récupération des données de facturation: {billing_response.text}"}), billing_response.status_code
-        billing_data = billing_response.json()
+            # Ne pas bloquer si la facturation n'est pas accessible (401/404 fréquents si l'utilisateur n'est pas admin)
+            logger.warning(f"Billing unavailable ({billing_response.status_code}). Continuing without billing. Body={billing_response.text}")
+            billing_data = { 'seat_breakdown': {}, 'warning': 'billing_unavailable' }
+        else:
+            billing_data = billing_response.json()
         
         # 2) Metrics (GA endpoint)
         from datetime import datetime, timedelta
         now_utc = datetime.utcnow()
         until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
-        since_iso = (now_utc - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
-        
+        # Augmenter la période à 90 jours pour plus de données
+        since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
         metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
         metrics_response = requests.get(
             metrics_url,
@@ -304,122 +397,47 @@ def get_metrics():
 @app.route('/api/users', methods=['GET'])
 def get_users():
     try:
-        headers = {
-            'Authorization': f'Bearer {GITHUB_TOKEN}',
-            'Accept': 'application/vnd.github+json'
-        }
-        
-        logger.info("Fetching Copilot data with headers:")
-        logger.info(f"Authorization: Bearer {'*' * len(GITHUB_TOKEN)}")
-        logger.info(f"Organization: {GITHUB_ORG}")
-        
-        # Récupérer les sièges
-        seats_url = f'https://api.github.com/orgs/{GITHUB_ORG}/copilot/billing/seats'
-        logger.info(f"Fetching seats data from: {seats_url}")
-        
+        # Utilise le token/org côté serveur (configurés via /api/save-token)
+        token = GITHUB_TOKEN
+        org = GITHUB_ORG
+
+        if not token or not org:
+            return jsonify({'error': 'Token and organization not configured'}), 400
+
+        headers = get_github_headers(token)
+
+        logger.info("Fetching Copilot seats data (accurate user info)")
+
+        # Récupérer les sièges (source de vérité pour les utilisateurs)
+        seats_url = f'https://api.github.com/orgs/{org}/copilot/billing/seats'
         seats_response = requests.get(seats_url, headers=headers)
         logger.info(f"Seats response status: {seats_response.status_code}")
-        logger.info(f"Seats response headers: {dict(seats_response.headers)}")
-        
+
         if seats_response.status_code != 200:
-            logger.error(f"Failed to fetch seats data: {seats_response.status_code}")
-            logger.error(f"Response: {seats_response.text}")
+            logger.error(f"Failed to fetch seats data: {seats_response.status_code} Body={seats_response.text}")
             return jsonify({'error': 'Failed to fetch seats data'}), seats_response.status_code
-            
+
         seats_data = seats_response.json()
-        logger.info(f"Received seats data for {len(seats_data.get('seats', []))} users")
-        
-        # Calculer la période (30 derniers jours)
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        
-        # Récupérer les métriques d'utilisation
-        usage_url = f'https://api.github.com/orgs/{GITHUB_ORG}/copilot/usage'
-        logger.info(f"Fetching usage data from: {usage_url}")
-        logger.info(f"Date range: {start_date} to {end_date}")
-        
-        usage_response = requests.get(
-            usage_url,
-            headers=headers,
-            params={
-                'start_date': start_date,
-                'end_date': end_date
-            }
-        )
-        
-        logger.info(f"Usage response status: {usage_response.status_code}")
-        logger.info(f"Usage response headers: {dict(usage_response.headers)}")
-        
-        usage_data = []
-        if usage_response.status_code == 200:
-            usage_data = usage_response.json()
-            logger.info(f"Received usage data: {json.dumps(usage_data, indent=2)}")
-        else:
-            logger.warning(f"Could not fetch usage data: {usage_response.status_code}")
-            logger.warning(f"Response: {usage_response.text}")
-        
-        # Compiler les statistiques par utilisateur
-        user_stats = {}
-        for day_data in usage_data:
-            logger.debug(f"Processing day: {day_data.get('date')}")
-            for user_data in day_data.get('users', []):
-                username = user_data.get('user')
-                logger.debug(f"Processing user data for {username}: {json.dumps(user_data, indent=2)}")
-                
-                if username not in user_stats:
-                    user_stats[username] = {
-                        'total_suggestions': 0,
-                        'accepted_suggestions': 0,
-                        'rejected_suggestions': 0,
-                        'languages': set(),
-                        'active_days': set()
-                    }
-                
-                stats = user_stats[username]
-                stats['total_suggestions'] += user_data.get('total_suggestions', 0)
-                stats['accepted_suggestions'] += user_data.get('accepted_suggestions', 0)
-                stats['rejected_suggestions'] += user_data.get('rejected_suggestions', 0)
-                stats['languages'].update(user_data.get('languages', []))
-                stats['active_days'].add(day_data.get('date'))
-                
-                logger.debug(f"Updated stats for {username}: {json.dumps({**stats, 'languages': list(stats['languages']), 'active_days': list(stats['active_days'])}, indent=2)}")
-        
-        # Préparer la réponse
+        total_seats = seats_data.get('total_seats') or len(seats_data.get('seats', []))
+
         users = []
         for seat in seats_data.get('seats', []):
-            login = seat['assignee']['login']
-            stats = user_stats.get(login, {})
-            
-            total_suggestions = stats.get('total_suggestions', 0)
-            acceptance_rate = 0
-            if total_suggestions > 0:
-                acceptance_rate = (stats.get('accepted_suggestions', 0) / total_suggestions) * 100
-            
+            assignee = seat.get('assignee') or {}
+            login = assignee.get('login')
             user = {
                 'login': login,
-                'name': seat['assignee'].get('name'),
-                'avatar_url': seat['assignee']['avatar_url'],
+                'name': assignee.get('name'),
+                'avatar_url': assignee.get('avatar_url'),
                 'last_activity': seat.get('last_activity_at'),
                 'last_editor': seat.get('last_activity_editor'),
-                'created_at': seat['created_at'],
-                'total_suggestions': total_suggestions,
-                'accepted_suggestions': stats.get('accepted_suggestions', 0),
-                'rejected_suggestions': stats.get('rejected_suggestions', 0),
-                'acceptance_rate': round(acceptance_rate, 2),
-                'languages_used': list(stats.get('languages', set())),
-                'active_days_count': len(stats.get('active_days', set())),
+                'created_at': seat.get('created_at'),
                 'is_active': seat.get('last_activity_at') is not None
             }
             users.append(user)
-            logger.debug(f"Prepared user data for {login}: {json.dumps(user, indent=2)}")
-        
-        response_data = {
-            'total_seats': seats_data.get('total_seats', 0),
-            'users': users
-        }
-        logger.info(f"Sending response with {len(users)} users")
-        return jsonify(response_data)
-        
+
+        logger.info(f"Sending response with {len(users)} users (from seats)")
+        return jsonify({'total_seats': total_seats, 'users': users})
+
     except Exception as e:
         logger.error(f"Error in get_users: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -427,31 +445,48 @@ def get_users():
 
 @app.route('/api/export/pdf', methods=['GET'])
 def export_pdf():
-    token = os.getenv('GITHUB_TOKEN')
-    org = os.getenv('GITHUB_ORG')
-    
+    token = GITHUB_TOKEN
+    org = GITHUB_ORG
+
     if not token or not org:
         return jsonify({"error": "Token and organization not configured"}), 400
 
     headers = get_github_headers(token)
-    
-    try:
-        # Fetch data
-        usage_response = requests.get(f"{GITHUB_API_BASE}/orgs/{org}/copilot/usage", headers=headers)
-        usage_data = usage_response.json()
 
-        # Create PDF
+    try:
+        # Récupérer les données depuis la nouvelle API (même logique que les autres routes)
+        from datetime import datetime, timedelta
+        now_utc = datetime.utcnow()
+        until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        metrics_response = requests.get(
+            metrics_url,
+            headers=headers,
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
+        )
+
+        if metrics_response.status_code != 200:
+            return jsonify({"error": "Impossible de récupérer les données Copilot"}), 500
+
+        usage_data = metrics_response.json()
+        daily_metrics, global_metrics, language_stats = process_daily_metrics(usage_data)
+        users, user_metrics = process_users_from_metrics(daily_metrics, language_stats)
+
+        # Créer le PDF avec les nouvelles données
         filename = f"copilot_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         doc = SimpleDocTemplate(filename, pagesize=letter)
         elements = []
 
         # Convert data to table format
-        data = [['User', 'Suggestions Accepted', 'Suggestions Rejected']]
-        for user in usage_data.get('users', []):
+        data = [['User', 'Suggestions Accepted', 'Suggestions Rejected', 'Acceptance Rate']]
+        for user in users:
             data.append([
-                user['user_login'],
+                user['login'],
                 user.get('accepted_suggestions', 0),
-                user.get('rejected_suggestions', 0)
+                user.get('rejected_suggestions', 0),
+                f"{user.get('acceptance_rate', 0):.1f}%"
             ])
 
         table = Table(data)
@@ -468,42 +503,63 @@ def export_pdf():
             ('FONTSIZE', (0, 1), (-1, -1), 12),
             ('GRID', (0, 0), (-1, -1), 1, colors.black)
         ]))
-        
+
         elements.append(table)
         doc.build(elements)
 
         return send_file(filename, as_attachment=True)
 
     except Exception as e:
-        logger.error(f"Erreur lors de la génération du PDF: {str(e)}")
+        logger.error(f"Erreur lors de la génération du fichier Excel: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/export/excel', methods=['GET'])
 def export_excel():
-    token = os.getenv('GITHUB_TOKEN')
-    org = os.getenv('GITHUB_ORG')
-    
+    token = GITHUB_TOKEN
+    org = GITHUB_ORG
+
     if not token or not org:
         return jsonify({"error": "Token and organization not configured"}), 400
 
     headers = get_github_headers(token)
-    
-    try:
-        # Fetch data
-        usage_response = requests.get(f"{GITHUB_API_BASE}/orgs/{org}/copilot/usage", headers=headers)
-        usage_data = usage_response.json()
 
-        # Create DataFrame
+    try:
+        # Récupérer les données depuis la nouvelle API (même logique que les autres routes)
+        from datetime import datetime, timedelta
+        now_utc = datetime.utcnow()
+        until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        metrics_response = requests.get(
+            metrics_url,
+            headers=headers,
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
+        )
+
+        if metrics_response.status_code != 200:
+            return jsonify({"error": "Impossible de récupérer les données Copilot"}), 500
+
+        usage_data = metrics_response.json()
+        daily_metrics, global_metrics, language_stats = process_daily_metrics(usage_data)
+        users, user_metrics = process_users_from_metrics(daily_metrics, language_stats)
+
+        # Créer le DataFrame avec les nouvelles données
         users_data = []
-        for user in usage_data.get('users', []):
+        for user in users:
             users_data.append({
-                'User': user['user_login'],
+                'User': user['login'],
+                'Name': user.get('name', user['login']),
                 'Suggestions Accepted': user.get('accepted_suggestions', 0),
-                'Suggestions Rejected': user.get('rejected_suggestions', 0)
+                'Suggestions Rejected': user.get('rejected_suggestions', 0),
+                'Acceptance Rate (%)': user.get('acceptance_rate', 0),
+                'Languages Used': ', '.join(user.get('languages_used', [])),
+                'Active Days': user.get('active_days_count', 0),
+                'Is Active': 'Yes' if user.get('is_active', False) else 'No'
             })
 
         df = pd.DataFrame(users_data)
-        
+
         # Save to Excel
         filename = f"copilot_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         df.to_excel(filename, index=False)

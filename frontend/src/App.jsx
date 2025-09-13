@@ -221,6 +221,15 @@ function App() {
     </Box>
   )
 
+  const gm = metrics?.usage?.global_metrics || {}
+  const days = gm.active_days || 0
+  const avgSuggestionsPerDay = days > 0 ? (gm.total_suggestions || 0) / days : 0
+  const avgLinesSuggestedPerDay = days > 0 ? (gm.total_lines_suggested || 0) / days : 0
+  const avgLinesAcceptedPerDay = days > 0 ? (gm.total_lines_accepted || 0) / days : 0
+  const avgPerUserPerDay = (days > 0 && (gm.total_users || 0) > 0)
+    ? (gm.total_suggestions || 0) / days / (gm.total_users || 1)
+    : 0
+
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
@@ -414,6 +423,9 @@ function App() {
                     <Typography variant="h4">
                       {metrics.usage?.global_metrics?.total_suggestions || 0}
                     </Typography>
+                    <Typography variant="caption">
+                      ≈ {avgSuggestionsPerDay.toFixed(1)}/jour {days ? `(sur ${days} jours)` : ''}
+                    </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
@@ -423,6 +435,9 @@ function App() {
                     </Typography>
                     <Typography variant="h4">
                       {`${metrics.usage?.global_metrics?.average_acceptance_rate?.toFixed(1) || '0.0'}%`}
+                    </Typography>
+                    <Typography variant="caption">
+                      moyenne sur {days || 0} jours
                     </Typography>
                   </Box>
                 </Grid>
@@ -434,6 +449,9 @@ function App() {
                     <Typography variant="h4">
                       {metrics.usage?.global_metrics?.average_suggestions_per_user || 0}
                     </Typography>
+                    <Typography variant="caption">
+                      ≈ {avgPerUserPerDay.toFixed(1)}/jour/utilisateur {days ? `(sur ${days} jours)` : ''}
+                    </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
@@ -443,6 +461,9 @@ function App() {
                     </Typography>
                     <Typography variant="h4">
                       {`${metrics.usage?.global_metrics?.seats_usage_rate?.toFixed(1) || '0.0'}%`}
+                    </Typography>
+                    <Typography variant="caption">
+                      max observé sur {days || 0} jours
                     </Typography>
                   </Box>
                 </Grid>
@@ -695,6 +716,9 @@ function App() {
                         <Typography variant="h4">
                           {metrics.usage?.global_metrics?.total_lines_suggested || 0}
                         </Typography>
+                        <Typography variant="caption">
+                          ≈ {avgLinesSuggestedPerDay.toFixed(0)}/jour {days ? `(sur ${days} jours)` : ''}
+                        </Typography>
                       </Paper>
                     </Grid>
                     <Grid item xs={12} sm={6} md={3}>
@@ -702,6 +726,9 @@ function App() {
                         <Typography variant="subtitle2">Lignes Acceptées</Typography>
                         <Typography variant="h4">
                           {metrics.usage?.global_metrics?.total_lines_accepted || 0}
+                        </Typography>
+                        <Typography variant="caption">
+                          ≈ {avgLinesAcceptedPerDay.toFixed(0)}/jour {days ? `(sur ${days} jours)` : ''}
                         </Typography>
                       </Paper>
                     </Grid>
@@ -717,7 +744,10 @@ function App() {
                       <Paper sx={{ p: 2, bgcolor: 'warning.light', color: 'warning.contrastText' }}>
                         <Typography variant="subtitle2">Moyenne Suggestions/Jour</Typography>
                         <Typography variant="h4">
-                          {(metrics.usage?.global_metrics?.average_suggestions_per_user || 0).toFixed(1)}
+                          {(metrics.usage?.global_metrics?.average_suggestions_per_day || 0).toFixed(1)}
+                        </Typography>
+                        <Typography variant="caption">
+                          ≈ {avgPerUserPerDay.toFixed(1)}/jour/utilisateur
                         </Typography>
                       </Paper>
                     </Grid>
