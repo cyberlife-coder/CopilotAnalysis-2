@@ -46,7 +46,8 @@ function App() {
       setError(null)
       
       console.log('Fetching metrics with token present:', !!token, 'and org:', org)
-      const response = await fetch(`http://localhost:5000/api/metrics?org=${encodeURIComponent(org)}`, {
+      // Use relative URL so Vite proxy forwards to backend, avoiding CORS
+      const response = await fetch(`/api/metrics?org=${encodeURIComponent(org)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

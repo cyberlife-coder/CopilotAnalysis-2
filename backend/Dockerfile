@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -16,10 +16,11 @@ COPY . .
 
 EXPOSE 5000
 
-# Make Flask listen on all interfaces
-ENV FLASK_APP=app.py
-ENV FLASK_ENV=development
-ENV PYTHONUNBUFFERED=1
+# Runtime env
+ENV FLASK_APP=app.py \
+    FLASK_ENV=production \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/api/health || exit 1

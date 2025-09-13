@@ -24,7 +24,9 @@ logger.addHandler(file_handler)
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:5173"],
+        # Dev: allow any origin to simplify local testing across ports
+        # Prod: restrict this to your exact frontend origins
+        "origins": "*",
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"]
     }
@@ -45,10 +47,12 @@ def get_github_headers(token):
 
 def process_daily_metrics(daily_metrics):
     """
-    Transforme les métriques quotidiennes en format utilisable par le frontend
+    Transforme la réponse Copilot Metrics API (GA) en format utilisable par le frontend.
+    Attend une liste de jours, chaque jour contenant des blocs
+    comme `copilot_ide_code_completions`, `copilot_ide_chat`, etc.
     """
-    logger.debug(f"Traitement des données quotidiennes")
-    
+    logger.debug("Traitement des données quotidiennes (Copilot Metrics API)")
+
     processed_data = []
     global_metrics = {
         'total_lines_suggested': 0,
@@ -57,110 +61,134 @@ def process_daily_metrics(daily_metrics):
         'total_suggestions': 0,
         'total_users': 0,
         'total_chat_turns': 0,
-        'total_chat_acceptances': 0
+        'total_chat_acceptances': 0,
     }
-    
-    # Pour suivre les statistiques par langage
+
+    # Agrégats par langage sur toute la période
     language_stats = {}
-    
+
     try:
-        for day_data in daily_metrics:
-            logger.debug(f"Traitement du jour: {day_data.get('day')}")
-            
-            # Statistiques quotidiennes
-            total_suggestions = day_data.get('total_suggestions_count', 0)
-            total_acceptances = day_data.get('total_acceptances_count', 0)
-            
+        for day_data in daily_metrics or []:
+            date_str = day_data.get('date', day_data.get('day', 'Unknown'))
+
+            # Code completions
+            completions = day_data.get('copilot_ide_code_completions', {}) or {}
+            editors = completions.get('editors', []) or []
+
+            day_suggestions = 0
+            day_acceptances = 0
+            day_lines_suggested = 0
+            day_lines_accepted = 0
+
+            # Agrégation par langage (jour)
+            for editor in editors:
+                for model in editor.get('models', []) or []:
+                    for lang in model.get('languages', []) or []:
+                        lang_name = lang.get('name', 'unknown')
+                        suggestions = int(lang.get('total_code_suggestions', 0) or 0)
+                        acceptances = int(lang.get('total_code_acceptances', 0) or 0)
+                        lines_sugg = int(lang.get('total_code_lines_suggested', 0) or 0)
+                        lines_acc = int(lang.get('total_code_lines_accepted', 0) or 0)
+                        active_users_lang = int(lang.get('total_engaged_users', 0) or 0)
+
+                        day_suggestions += suggestions
+                        day_acceptances += acceptances
+                        day_lines_suggested += lines_sugg
+                        day_lines_accepted += lines_acc
+
+                        if lang_name not in language_stats:
+                            language_stats[lang_name] = {
+                                'suggestions': 0,
+                                'acceptances': 0,
+                                'lines_suggested': 0,
+                                'lines_accepted': 0,
+                                'active_users': 0,
+                            }
+                        stats = language_stats[lang_name]
+                        stats['suggestions'] += suggestions
+                        stats['acceptances'] += acceptances
+                        stats['lines_suggested'] += lines_sugg
+                        stats['lines_accepted'] += lines_acc
+                        stats['active_users'] = max(stats['active_users'], active_users_lang)
+
+            # Chat
+            chat = day_data.get('copilot_ide_chat', {}) or {}
+            chat_editors = chat.get('editors', []) or []
+            day_chat_turns = 0
+            day_chat_acceptances = 0
+            for editor in chat_editors:
+                for model in editor.get('models', []) or []:
+                    day_chat_turns += int(model.get('total_chats', 0) or 0)
+                    day_chat_acceptances += int(model.get('total_chat_insertion_events', 0) or 0)
+                    day_chat_acceptances += int(model.get('total_chat_copy_events', 0) or 0)
+
+            active_users_day = int(day_data.get('total_active_users', 0) or 0)
+
             daily_stats = {
-                'day': day_data.get('date', day_data.get('day', 'Unknown')),
-                'accepted_suggestions': total_acceptances,
-                'rejected_suggestions': total_suggestions - total_acceptances if total_suggestions >= total_acceptances else 0,
-                'total_suggestions': total_suggestions,
-                'active_users': day_data.get('total_active_users', 0),
-                'lines_suggested': day_data.get('total_lines_suggested', 0),
-                'lines_accepted': day_data.get('total_lines_accepted', 0),
-                'chat_turns': day_data.get('total_chat_turns', 0),
-                'chat_acceptances': day_data.get('total_chat_acceptances', 0),
-                'acceptance_rate': (total_acceptances / total_suggestions * 100) if total_suggestions > 0 else 0
+                'day': date_str,
+                'accepted_suggestions': day_acceptances,
+                'rejected_suggestions': max(day_suggestions - day_acceptances, 0),
+                'total_suggestions': day_suggestions,
+                'active_users': active_users_day,
+                'lines_suggested': day_lines_suggested,
+                'lines_accepted': day_lines_accepted,
+                'chat_turns': day_chat_turns,
+                'chat_acceptances': day_chat_acceptances,
+                'acceptance_rate': (day_acceptances / day_suggestions * 100) if day_suggestions > 0 else 0,
             }
-            
-            # Mise à jour des métriques globales
-            if daily_stats['total_suggestions'] > 0:
+
+            if day_suggestions > 0:
                 global_metrics['active_days'] += 1
-                global_metrics['total_suggestions'] += daily_stats['total_suggestions']
-                global_metrics['total_lines_suggested'] += daily_stats['lines_suggested']
-                global_metrics['total_lines_accepted'] += daily_stats['lines_accepted']
-                global_metrics['total_users'] = max(global_metrics['total_users'], daily_stats['active_users'])
-                global_metrics['total_chat_turns'] += daily_stats['chat_turns']
-                global_metrics['total_chat_acceptances'] += daily_stats['chat_acceptances']
-            
-            # Traitement des statistiques par langage
-            for lang_data in day_data.get('breakdown', []):
-                lang_name = lang_data.get('language', 'unknown')
-                if lang_name not in language_stats:
-                    language_stats[lang_name] = {
-                        'suggestions': 0,
-                        'acceptances': 0,
-                        'lines_suggested': 0,
-                        'lines_accepted': 0,
-                        'active_users': 0,
-                        'editor_breakdown': {'vscode': 0, 'visual_studio': 0}
-                    }
-                
-                stats = language_stats[lang_name]
-                stats['suggestions'] += lang_data.get('suggestions_count', 0)
-                stats['acceptances'] += lang_data.get('acceptances_count', 0)
-                stats['lines_suggested'] += lang_data.get('lines_suggested', 0)
-                stats['lines_accepted'] += lang_data.get('lines_accepted', 0)
-                stats['active_users'] = max(stats['active_users'], lang_data.get('active_users', 0))
-                
-                # Comptage par éditeur
-                editor = lang_data.get('editor', 'unknown')
-                if editor in stats['editor_breakdown']:
-                    stats['editor_breakdown'][editor] += lang_data.get('suggestions_count', 0)
-            
+                global_metrics['total_suggestions'] += day_suggestions
+                global_metrics['total_lines_suggested'] += day_lines_suggested
+                global_metrics['total_lines_accepted'] += day_lines_accepted
+                global_metrics['total_users'] = max(global_metrics['total_users'], active_users_day)
+                global_metrics['total_chat_turns'] += day_chat_turns
+                global_metrics['total_chat_acceptances'] += day_chat_acceptances
+
             processed_data.append(daily_stats)
-    
+
     except Exception as e:
         logger.error(f"Erreur lors du traitement des données: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
-    
+
     # Calcul des métriques moyennes
     if global_metrics['active_days'] > 0:
-        global_metrics['average_suggestions_per_day'] = round(global_metrics['total_suggestions'] / global_metrics['active_days'], 2)
-        
+        global_metrics['average_suggestions_per_day'] = round(
+            global_metrics['total_suggestions'] / global_metrics['active_days'], 2
+        )
         total_acceptances = sum(day['accepted_suggestions'] for day in processed_data)
         total_suggestions = sum(day['total_suggestions'] for day in processed_data)
-        global_metrics['average_acceptance_rate'] = round((total_acceptances / total_suggestions * 100), 2) if total_suggestions > 0 else 0
-        
+        global_metrics['average_acceptance_rate'] = round(
+            (total_acceptances / total_suggestions * 100), 2
+        ) if total_suggestions > 0 else 0
         if global_metrics['total_users'] > 0:
-            global_metrics['average_suggestions_per_user'] = round(global_metrics['total_suggestions'] / global_metrics['total_users'], 2)
+            global_metrics['average_suggestions_per_user'] = round(
+                global_metrics['total_suggestions'] / global_metrics['total_users'], 2
+            )
         else:
             global_metrics['average_suggestions_per_user'] = 0
-            
-        # Calcul du taux d'utilisation des sièges
+
         max_active_users = max((day['active_users'] for day in processed_data), default=0)
-        global_metrics['seats_usage_rate'] = round((max_active_users / global_metrics['total_users'] * 100), 2) if global_metrics['total_users'] > 0 else 0
-    
+        global_metrics['seats_usage_rate'] = round(
+            (max_active_users / global_metrics['total_users'] * 100), 2
+        ) if global_metrics['total_users'] > 0 else 0
+
     # Ajout des taux d'acceptation pour chaque langage
     for lang_name, stats in language_stats.items():
         stats['acceptance_rate'] = (
             stats['acceptances'] / stats['suggestions'] * 100
         ) if stats['suggestions'] > 0 else 0
-    
-    # Tri des langages par nombre de suggestions
+
+    # Tri des langages par suggestions
     language_stats = dict(
-        sorted(
-            language_stats.items(),
-            key=lambda x: x[1]['suggestions'],
-            reverse=True
-        )
+        sorted(language_stats.items(), key=lambda x: x[1]['suggestions'], reverse=True)
     )
-    
+
     logger.debug(f"Métriques globales: {global_metrics}")
     logger.debug(f"Nombre de langages traités: {len(language_stats)}")
-    
+
     return processed_data, global_metrics, language_stats
 
 @app.route('/api/save-token', methods=['POST'])
@@ -215,49 +243,41 @@ def get_metrics():
         
         logger.info(f"Récupération des métriques pour l'organisation: {org}")
         
-        # Récupération des métriques de facturation
+        # 1) Billing
         billing_url = f'https://api.github.com/orgs/{org}/copilot/billing'
         billing_response = requests.get(billing_url, headers=headers)
         if billing_response.status_code != 200:
             logger.error(f"Erreur de facturation: {billing_response.status_code} - {billing_response.text}")
-            return jsonify({'error': f'Erreur lors de la récupération des données de facturation: {billing_response.text}'}), billing_response.status_code
-            
+            return jsonify({'error': f"Erreur lors de la récupération des données de facturation: {billing_response.text}"}), billing_response.status_code
         billing_data = billing_response.json()
-        logger.debug(f"Données de facturation reçues: {billing_data}")
         
-        # Récupérer les métriques d'utilisation
+        # 2) Metrics (GA endpoint)
         from datetime import datetime, timedelta
+        now_utc = datetime.utcnow()
+        until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+        since_iso = (now_utc - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
         
-        # Calculer la période (30 derniers jours)
-        current_date = datetime.now()
-        end_date = current_date.strftime('%Y-%m-%d')
-        start_date = (current_date - timedelta(days=30)).strftime('%Y-%m-%d')
-        
-        logger.info("=== API Usage Request ===")
-        logger.info(f"Period: {start_date} to {end_date}")
-        
-        # Récupérer les métriques d'utilisation
-        usage_url = f'https://api.github.com/orgs/{org}/copilot/usage'
-        usage_response = requests.get(
-            usage_url,
+        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        metrics_response = requests.get(
+            metrics_url,
             headers=headers,
-            params={
-                'start_date': start_date,
-                'end_date': end_date
-            }
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
         )
-        
-        logger.info(f"Status: {usage_response.status_code}")
-        if usage_response.status_code != 200:
-            error_msg = usage_response.text
-            logger.error(f"Error: {error_msg}")
-            return jsonify({'error': f'Failed to fetch usage data: {error_msg}'}), usage_response.status_code
-            
-        usage_data = usage_response.json()
-        logger.info(f"Received data: {json.dumps(usage_data, indent=2)}")
-        logger.info("=== End API Usage Request ===\n")
-        
-        # Traitement des données d'utilisation
+        logger.info(f"Metrics status: {metrics_response.status_code}")
+        if metrics_response.status_code != 200:
+            # Graceful fallback: return empty usage with a notice instead of failing the entire request
+            error_msg = metrics_response.text
+            logger.error(f"Metrics error: {error_msg}")
+            usage_data = []
+            notice = (
+                "Copilot metrics are unavailable (metrics API returned "
+                f"{metrics_response.status_code}). Ensure the Copilot Metrics API access policy is enabled for the org, "
+                "and that your token has the required scopes (manage_billing:copilot or read:org)."
+            )
+        else:
+            usage_data = metrics_response.json()
+            notice = None
+
         daily_metrics, global_metrics, language_stats = process_daily_metrics(usage_data)
         
         response_data = {
@@ -268,7 +288,8 @@ def get_metrics():
                 'language_stats': language_stats
             }
         }
-        
+        if notice:
+            response_data['notice'] = notice
         logger.info("Réponse préparée avec succès")
         return jsonify(response_data)
         
