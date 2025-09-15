@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Container, Box, TextField, Button, Paper, Typography, Grid, CircularProgress, Alert, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Avatar, Chip, Link, Dialog, DialogTitle, DialogContent, DialogActions, InputAdornment, Divider, Tooltip as MuiTooltip, IconButton } from '@mui/material'
+import { Container, Box, TextField, Button, Paper, Typography, Grid, CircularProgress, Alert, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Avatar, Chip, Link, Dialog, DialogTitle, DialogContent, DialogActions, InputAdornment, Divider, Tooltip as MuiTooltip, IconButton, TableSortLabel } from '@mui/material'
 import { Bar, Line, Pie } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -35,6 +35,23 @@ function App() {
   const [error, setError] = useState(null)
   const [users, setUsers] = useState([]);
   const [totalSeats, setTotalSeats] = useState(0);
+
+  // Tri pour la table "Statistiques détaillées par Langage"
+  const [langOrderBy, setLangOrderBy] = useState('suggestions');
+  const [langOrder, setLangOrder] = useState('desc');
+  const handleLangSort = (property) => {
+    setLangOrderBy((prevOrderBy) => {
+      if (prevOrderBy === property) {
+        // toggle asc/desc
+        setLangOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+        return prevOrderBy;
+      }
+      // when changing column, default to desc for numeric, asc for text
+      const numericColumns = new Set(['suggestions', 'acceptances', 'acceptanceRate', 'lines_suggested', 'lines_accepted', 'active_users']);
+      setLangOrder(numericColumns.has(property) ? 'desc' : 'asc');
+      return property;
+    });
+  };
 
   // États pour le calculateur d'économie
   const [roiModalOpen, setRoiModalOpen] = useState(false)
@@ -878,31 +895,111 @@ function App() {
                       <Table>
                         <TableHead>
                           <TableRow>
-                            <TableCell>Langage</TableCell>
-                            <TableCell align="right">Suggestions</TableCell>
-                            <TableCell align="right">Acceptées</TableCell>
-                            <TableCell align="right">Taux d'Acceptation</TableCell>
-                            <TableCell align="right">Lignes Suggérées</TableCell>
-                            <TableCell align="right">Lignes Acceptées</TableCell>
-                            <TableCell align="right">Utilisateurs Actifs</TableCell>
+                            <TableCell sortDirection={langOrderBy === 'lang' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'lang'}
+                                direction={langOrderBy === 'lang' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('lang')}
+                              >
+                                Langage
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'suggestions' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'suggestions'}
+                                direction={langOrderBy === 'suggestions' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('suggestions')}
+                              >
+                                Suggestions
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'acceptances' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'acceptances'}
+                                direction={langOrderBy === 'acceptances' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('acceptances')}
+                              >
+                                Acceptées
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'acceptanceRate' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'acceptanceRate'}
+                                direction={langOrderBy === 'acceptanceRate' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('acceptanceRate')}
+                              >
+                                Taux d'Acceptation
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'lines_suggested' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'lines_suggested'}
+                                direction={langOrderBy === 'lines_suggested' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('lines_suggested')}
+                              >
+                                Lignes Suggérées
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'lines_accepted' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'lines_accepted'}
+                                direction={langOrderBy === 'lines_accepted' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('lines_accepted')}
+                              >
+                                Lignes Acceptées
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell align="right" sortDirection={langOrderBy === 'active_users' ? langOrder : false}>
+                              <TableSortLabel
+                                active={langOrderBy === 'active_users'}
+                                direction={langOrderBy === 'active_users' ? langOrder : 'asc'}
+                                onClick={() => handleLangSort('active_users')}
+                              >
+                                Utilisateurs Actifs
+                              </TableSortLabel>
+                            </TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {Object.entries(metrics.usage.language_stats).map(([lang, stats]) => (
-                            <TableRow key={lang}>
-                              <TableCell component="th" scope="row">
-                                {lang}
-                              </TableCell>
-                              <TableCell align="right">{stats.suggestions}</TableCell>
-                              <TableCell align="right">{stats.acceptances}</TableCell>
-                              <TableCell align="right">
-                                {((stats.acceptances / stats.suggestions) * 100).toFixed(1)}%
-                              </TableCell>
-                              <TableCell align="right">{stats.lines_suggested}</TableCell>
-                              <TableCell align="right">{stats.lines_accepted}</TableCell>
-                              <TableCell align="right">{stats.active_users}</TableCell>
-                            </TableRow>
-                          ))}
+                          {(() => {
+                            const languageStats = metrics.usage.language_stats || {};
+                            const rows = Object.entries(languageStats).map(([lang, s]) => {
+                              const suggestions = Number(s.suggestions) || 0;
+                              const acceptances = Number(s.acceptances) || 0;
+                              const acceptanceRate = suggestions > 0 ? (acceptances / suggestions) * 100 : 0;
+                              return {
+                                lang,
+                                suggestions,
+                                acceptances,
+                                acceptanceRate,
+                                lines_suggested: Number(s.lines_suggested) || 0,
+                                lines_accepted: Number(s.lines_accepted) || 0,
+                                active_users: Number(s.active_users) || 0,
+                              };
+                            });
+                            const valueOf = (row, key) => {
+                              if (key === 'lang') return row.lang.toLowerCase();
+                              return row[key] ?? 0;
+                            };
+                            const sorted = rows.slice().sort((a, b) => {
+                              const va = valueOf(a, langOrderBy);
+                              const vb = valueOf(b, langOrderBy);
+                              if (va < vb) return langOrder === 'asc' ? -1 : 1;
+                              if (va > vb) return langOrder === 'asc' ? 1 : -1;
+                              return 0;
+                            });
+                            return sorted.map((row) => (
+                              <TableRow key={row.lang}>
+                                <TableCell component="th" scope="row">{row.lang}</TableCell>
+                                <TableCell align="right">{row.suggestions}</TableCell>
+                                <TableCell align="right">{row.acceptances}</TableCell>
+                                <TableCell align="right">{row.acceptanceRate.toFixed(1)}%</TableCell>
+                                <TableCell align="right">{row.lines_suggested}</TableCell>
+                                <TableCell align="right">{row.lines_accepted}</TableCell>
+                                <TableCell align="right">{row.active_users}</TableCell>
+                              </TableRow>
+                            ));
+                          })()}
                         </TableBody>
                       </Table>
                     </TableContainer>

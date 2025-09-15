@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import traceback
 import logging
 
+import re
+from urllib.parse import quote
 # Configuration du logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -37,6 +39,19 @@ load_dotenv()
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 GITHUB_ORG = os.getenv('GITHUB_ORG')
+
+def is_valid_github_org(org: str) -> bool:
+    """Validate GitHub org/user identifier to prevent path injection.
+    Rules: 1-39 chars, alphanumerics or single hyphens, cannot start/end with hyphen,
+    and no consecutive hyphens.
+    """
+    if not isinstance(org, str):
+        return False
+    if not (1 <= len(org) <= 39):
+        return False
+    if '--' in org:
+        return False
+    return re.match(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$', org) is not None
 
 def get_github_headers(token):
     return {
@@ -292,6 +307,10 @@ def save_token():
     if not token or not org:
         return jsonify({"error": "Token and organization are required"}), 400
     
+    # Validate organization format to prevent SSRF/path injection
+    if not is_valid_github_org(org):
+        return jsonify({"error": "Invalid organization format"}), 400
+    
     # Save to .env file
     with open('.env', 'w') as f:
         f.write(f"GITHUB_TOKEN={token}\n")
@@ -305,7 +324,13 @@ def save_token():
     # Test the token immediately
     headers = get_github_headers(token)
     try:
-        test_response = requests.get(f"{GITHUB_API_BASE}/orgs/{org}", headers=headers)
+        safe_org = quote(org, safe='')
+        test_response = requests.get(
+            f"{GITHUB_API_BASE}/orgs/{safe_org}",
+            headers=headers,
+            timeout=10,
+            allow_redirects=False
+        )
         test_response.raise_for_status()
         logger.info(f"GitHub API test successful")  
     except Exception as e:
@@ -324,6 +349,8 @@ def get_metrics():
         org = request.args.get('org')
         if not org:
             return jsonify({'error': 'Organisation manquante'}), 400
+        if not is_valid_github_org(org):
+            return jsonify({'error': 'Organisation invalide'}), 400
             
         headers = {
             'Authorization': token,
@@ -332,10 +359,11 @@ def get_metrics():
         }
         
         logger.info(f"Récupération des métriques pour l'organisation: {org}")
+        safe_org = quote(org, safe='')
         
         # 1) Billing
-        billing_url = f'https://api.github.com/orgs/{org}/copilot/billing'
-        billing_response = requests.get(billing_url, headers=headers)
+        billing_url = f'https://api.github.com/orgs/{safe_org}/copilot/billing'
+        billing_response = requests.get(billing_url, headers=headers, timeout=20, allow_redirects=False)
         if billing_response.status_code != 200:
             # Ne pas bloquer si la facturation n'est pas accessible (401/404 fréquents si l'utilisateur n'est pas admin)
             logger.warning(f"Billing unavailable ({billing_response.status_code}). Continuing without billing. Body={billing_response.text}")
@@ -350,11 +378,13 @@ def get_metrics():
         # Augmenter la période à 90 jours pour plus de données
         since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        metrics_url = f'https://api.github.com/orgs/{safe_org}/copilot/metrics'
         metrics_response = requests.get(
             metrics_url,
             headers=headers,
-            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100},
+            timeout=20,
+            allow_redirects=False
         )
         logger.info(f"Metrics status: {metrics_response.status_code}")
         if metrics_response.status_code != 200:
@@ -404,13 +434,17 @@ def get_users():
         if not token or not org:
             return jsonify({'error': 'Token and organization not configured'}), 400
 
+        if not is_valid_github_org(org):
+            return jsonify({'error': 'Invalid organization configured'}), 400
+
         headers = get_github_headers(token)
 
         logger.info("Fetching Copilot seats data (accurate user info)")
 
         # Récupérer les sièges (source de vérité pour les utilisateurs)
-        seats_url = f'https://api.github.com/orgs/{org}/copilot/billing/seats'
-        seats_response = requests.get(seats_url, headers=headers)
+        safe_org = quote(org, safe='')
+        seats_url = f'https://api.github.com/orgs/{safe_org}/copilot/billing/seats'
+        seats_response = requests.get(seats_url, headers=headers, timeout=20, allow_redirects=False)
         logger.info(f"Seats response status: {seats_response.status_code}")
 
         if seats_response.status_code != 200:
@@ -451,6 +485,9 @@ def export_pdf():
     if not token or not org:
         return jsonify({"error": "Token and organization not configured"}), 400
 
+    if not is_valid_github_org(org):
+        return jsonify({"error": "Invalid organization configured"}), 400
+
     headers = get_github_headers(token)
 
     try:
@@ -460,11 +497,14 @@ def export_pdf():
         until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        safe_org = quote(org, safe='')
+        metrics_url = f'https://api.github.com/orgs/{safe_org}/copilot/metrics'
         metrics_response = requests.get(
             metrics_url,
             headers=headers,
-            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100},
+            timeout=20,
+            allow_redirects=False
         )
 
         if metrics_response.status_code != 200:
@@ -521,6 +561,9 @@ def export_excel():
     if not token or not org:
         return jsonify({"error": "Token and organization not configured"}), 400
 
+    if not is_valid_github_org(org):
+        return jsonify({"error": "Invalid organization configured"}), 400
+
     headers = get_github_headers(token)
 
     try:
@@ -530,11 +573,14 @@ def export_excel():
         until_iso = now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
         since_iso = (now_utc - timedelta(days=90)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        metrics_url = f'https://api.github.com/orgs/{org}/copilot/metrics'
+        safe_org = quote(org, safe='')
+        metrics_url = f'https://api.github.com/orgs/{safe_org}/copilot/metrics'
         metrics_response = requests.get(
             metrics_url,
             headers=headers,
-            params={'since': since_iso, 'until': until_iso, 'per_page': 100}
+            params={'since': since_iso, 'until': until_iso, 'per_page': 100},
+            timeout=20,
+            allow_redirects=False
         )
 
         if metrics_response.status_code != 200:
@@ -575,4 +621,6 @@ def health_check():
     return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Never enable debug by default in production. Control via env var.
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=debug_mode)
